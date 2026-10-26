@@ -1,0 +1,46 @@
+# Local production-like stack: Postgres + Redis + API + separate worker (scale with --scale worker=N).
+#   cp backend/.env.example backend/.env   (fill in HubSpot credentials + secrets)
+#   docker compose up --build
+# Frontend: cd frontend && npm install && npm run dev   (http://localhost:5173)
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: app, POSTGRES_PASSWORD: app, POSTGRES_DB: hubspot_sync }
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U app -d hubspot_sync"], interval: 5s, timeout: 3s, retries: 10 }
+
+  redis:
+    image: redis:7-alpine
+    # noeviction is REQUIRED by BullMQ: evicting queue keys would silently drop jobs.
+    command: ["redis-server", "--maxmemory-policy", "noeviction", "--appendonly", "yes"]
+    ports: ["6379:6379"]
+    volumes: [redisdata:/data]
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 5s, timeout: 3s, retries: 10 }
+
+  api:
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgres://app:app@postgres:5432/hubspot_sync
+      REDIS_URL: redis://redis:6379
+      RUN_WORKERS_IN_API: "false"
+    ports: ["3000:3000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  worker:
+    build: ./backend
+    command: ["node", "dist/worker.js"]
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgres://app:app@postgres:5432/hubspot_sync
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  redisdata:

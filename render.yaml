@@ -1,0 +1,42 @@
+# Render Blueprint: API + worker + Postgres + Redis (Key Value). Verify field names against
+# https://render.com/docs/blueprint-spec before applying; Render evolves this schema.
+# Secrets marked `sync: false` are prompted for in the dashboard on first apply.
+databases:
+  - name: hubspot-sync-db
+    plan: basic-256mb
+
+services:
+  - type: keyvalue
+    name: hubspot-sync-redis
+    plan: starter
+    maxmemoryPolicy: noeviction   # required by BullMQ
+    ipAllowList: []               # private network only
+
+  - type: web
+    name: hubspot-sync-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/health
+    envVars: &shared
+      - { key: NODE_ENV, value: production }
+      - { key: DATABASE_URL, fromDatabase: { name: hubspot-sync-db, property: connectionString } }
+      - { key: DATABASE_SSL, value: "false" }   # internal connection string; set true if you use the external URL
+      - { key: REDIS_URL, fromService: { type: keyvalue, name: hubspot-sync-redis, property: connectionString } }
+      - { key: HUBSPOT_CLIENT_ID, sync: false }
+      - { key: HUBSPOT_CLIENT_SECRET, sync: false }
+      - { key: HUBSPOT_REDIRECT_URI, sync: false }   # https://<vercel-app>/api/auth/hubspot/callback
+      - { key: FRONTEND_URL, sync: false }           # https://<vercel-app>
+      - { key: WEBHOOK_PUBLIC_URL, sync: false }     # https://<render-api-host>/api/webhooks/hubspot
+      - { key: COOKIE_SECRET, generateValue: true }
+      - { key: TOKEN_ENCRYPTION_KEY, sync: false }   # openssl rand -base64 32 (keep it; rotating it logs everyone out)
+      - { key: RUN_WORKERS_IN_API, value: "false" }
+      - { key: AUTO_MIGRATE, value: "true" }
+
+  - type: worker
+    name: hubspot-sync-worker
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    dockerCommand: node dist/worker.js
+    envVars: *shared
