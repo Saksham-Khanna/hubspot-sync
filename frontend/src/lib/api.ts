@@ -6,26 +6,68 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout for cold starts / network delays
+  // 30s timeout accommodates Render cold starts while preventing indefinite hangs
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+  if (init.signal) {
+    if (init.signal.aborted) {
+      controller.abort();
+    } else {
+      init.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+  }
+
   try {
     const res = await fetch(`/api${path}`, {
       credentials: 'include',
-      signal: controller.signal,
       ...init,
+      signal: controller.signal,
       headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
     });
-    clearTimeout(timeoutId);
+
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
-      throw new ApiError(body.message ?? `Request failed (${res.status})`, res.status, body.error);
+      const contentType = res.headers.get('content-type') ?? '';
+      let message: string | undefined;
+      let code: string | undefined;
+
+      if (contentType.includes('application/json')) {
+        const body = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
+        message = body.message;
+        code = body.error;
+      } else {
+        const text = await res.text().catch(() => '');
+        message = text.length > 0 && text.length < 200 ? text : undefined;
+      }
+
+      if (res.status === 502 || res.status === 503) {
+        throw new ApiError(
+          message ?? 'Backend service is starting up or temporarily unavailable. Please retry in a few moments.',
+          res.status,
+          code ?? 'service_unavailable',
+        );
+      }
+      if (res.status === 504) {
+        throw new ApiError(
+          message ?? 'Gateway timed out contacting backend. The server may be waking up.',
+          504,
+          code ?? 'timeout',
+        );
+      }
+      throw new ApiError(message ?? `Request failed (${res.status})`, res.status, code);
     }
-    return res.json() as Promise<T>;
+
+    return (await res.json()) as T;
   } catch (err: unknown) {
-    clearTimeout(timeoutId);
     if ((err as Error).name === 'AbortError') {
-      throw new ApiError('Request timed out. The server may be waking up from inactivity.', 504, 'timeout');
+      throw new ApiError(
+        'Request timed out. The backend server may be waking up from cold start.',
+        504,
+        'timeout',
+      );
     }
     throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

@@ -32,7 +32,7 @@ export function TopBar({ title, auth, isLoadingAuth, isAuthError, onDisconnect, 
         {auth?.needsReauth && (
           <span className="pill warn">Authorization Expired</span>
         )}
-        {auth && !auth.connected && (
+        {!auth?.connected && !isLoadingAuth && (
           <a className="btn primary" href="/api/auth/hubspot/start">
             Connect HubSpot
           </a>
