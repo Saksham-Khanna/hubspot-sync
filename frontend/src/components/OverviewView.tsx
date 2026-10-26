@@ -2,6 +2,8 @@ import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, AuthStatus, SyncStatus } from '../lib/api';
 import { Users, FileText, Activity, RefreshCw, ArrowRight } from 'lucide-react';
+import { Skeleton } from './Skeleton';
+import { useToast } from './Toast';
 
 interface OverviewViewProps {
   auth?: AuthStatus;
@@ -19,6 +21,7 @@ const ago = (iso: string | null) => {
 
 export function OverviewView({ auth, onNavigate }: OverviewViewProps) {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const syncQuery = useQuery({
     queryKey: ['sync-status'],
     queryFn: api.syncStatus,
@@ -28,7 +31,11 @@ export function OverviewView({ auth, onNavigate }: OverviewViewProps) {
 
   const retrySync = useMutation({
     mutationFn: api.retrySync,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sync-status'] }),
+    onSuccess: (res) => {
+      void qc.invalidateQueries({ queryKey: ['sync-status'] });
+      toast(res.resumed ? 'Sync resumed from its last checkpoint.' : 'A new sync was started.', 'ok');
+    },
+    onError: (err) => toast((err as Error).message, 'error'),
   });
 
   const connected = auth?.connected || auth?.needsReauth;
@@ -48,10 +55,15 @@ export function OverviewView({ auth, onNavigate }: OverviewViewProps) {
     );
   }
 
-  const s = syncQuery.data;
+  const s: SyncStatus | undefined = syncQuery.data;
   const job = s?.latest;
   const notes = s?.notes ?? { pending: 0, syncing: 0, synced: 0, failed: 0 };
   const queue = s?.queue ?? { waiting: 0, active: 0, delayed: 0, failed: 0 };
+  const loading = syncQuery.isLoading;
+  const running = job?.status === 'running' || job?.status === 'pending';
+  const statusLabel = !job ? 'Waiting' : running ? 'Syncing…' : job.status === 'completed' ? 'Up to date' : 'Stopped';
+  const statusTone = job?.status === 'failed' ? 'bad' : running ? 'warn' : job?.status === 'completed' ? 'ok' : 'muted';
+  const queueDepth = queue.waiting + queue.active + queue.delayed;
 
   return (
     <div>
@@ -71,85 +83,100 @@ export function OverviewView({ auth, onNavigate }: OverviewViewProps) {
         </div>
       )}
 
+      {running && (
+        <div className="sync-progress" role="progressbar" aria-label="Sync in progress">
+          <span />
+        </div>
+      )}
+
       <div className="metrics-grid">
         <div className="metric-card">
           <div className="metric-header">
             <span>Synced Contacts</span>
-            <Users size={16} className="muted" />
+            <span className="metric-icon primary"><Users size={16} /></span>
           </div>
-          <div className="metric-value">{s?.contacts?.toLocaleString() ?? '—'}</div>
-          <div className="metric-footer">Stored in PostgreSQL</div>
+          {loading ? <Skeleton className="skeleton-value" /> : <div className="metric-value">{s?.contacts.toLocaleString() ?? '—'}</div>}
+          {loading ? <Skeleton className="skeleton-line w60" /> : <div className="metric-footer">Stored in PostgreSQL</div>}
         </div>
 
         <div className="metric-card">
           <div className="metric-header">
             <span>Notes Delivered</span>
-            <FileText size={16} className="muted" />
+            <span className="metric-icon ok"><FileText size={16} /></span>
           </div>
-          <div className="metric-value">{notes.synced.toLocaleString()}</div>
-          <div className="metric-footer">
-            {notes.failed > 0 ? <span className="error-text">{notes.failed} failed</span> : 'All delivered successfully'}
-          </div>
+          {loading ? <Skeleton className="skeleton-value" /> : <div className="metric-value">{notes.synced.toLocaleString()}</div>}
+          {loading ? <Skeleton className="skeleton-line w60" /> : (
+            <div className="metric-footer">
+              {notes.failed > 0 ? <span className="error-text">{notes.failed} failed</span> : 'All delivered successfully'}
+            </div>
+          )}
         </div>
 
         <div className="metric-card">
           <div className="metric-header">
             <span>Sync Status</span>
-            <Activity size={16} className="muted" />
+            <span className={`metric-icon ${statusTone}`}><Activity size={16} /></span>
           </div>
-          <div className="metric-value" style={{ fontSize: '1.25rem', marginTop: '0.25rem' }}>
-            {!job ? 'Waiting' : job.status === 'running' || job.status === 'pending' ? 'Syncing…' : job.status === 'completed' ? 'Up to date' : 'Stopped'}
-          </div>
-          <div className="metric-footer">
-            {job?.finished_at ? `Completed ${ago(job.finished_at)}` : job?.status === 'running' ? `${job.pages} pages fetched` : 'Idle'}
-          </div>
+          {loading ? <Skeleton className="skeleton-value" /> : (
+            <div className={`metric-value status-value ${statusTone}`}>
+              <span className={`status-dot ${statusTone}`} />
+              {statusLabel}
+            </div>
+          )}
+          {loading ? <Skeleton className="skeleton-line w60" /> : (
+            <div className="metric-footer">
+              {job?.finished_at ? `Completed ${ago(job.finished_at)}` : job?.status === 'running' ? `${job.pages} pages fetched` : 'Idle'}
+            </div>
+          )}
         </div>
 
         <div className="metric-card">
           <div className="metric-header">
             <span>Queue Depth</span>
-            <RefreshCw size={16} className="muted" />
+            <span className={`metric-icon ${queueDepth > 0 ? 'warn' : 'muted'}`}><RefreshCw size={16} /></span>
           </div>
-          <div className="metric-value">{queue.waiting + queue.active + queue.delayed}</div>
-          <div className="metric-footer">{queue.failed} failed jobs in queue</div>
+          {loading ? <Skeleton className="skeleton-value" /> : <div className="metric-value">{queueDepth}</div>}
+          {loading ? <Skeleton className="skeleton-line w60" /> : (
+            <div className="metric-footer">
+              {queue.failed > 0 ? <span className="error-text">{queue.failed} failed jobs in queue</span> : 'No failed jobs in queue'}
+            </div>
+          )}
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
-        <div className="card" style={{ padding: '1.5rem' }}>
-          <h3 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span>Quick Navigation</span>
-          </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            <button className="btn" style={{ justifyContent: 'space-between', width: '100%' }} onClick={() => onNavigate('contacts')}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users size={16} /> Browse Synced Contacts</span>
+      <div className="dashboard-grid">
+        <div className="card dashboard-panel">
+          <h3 className="panel-title">Quick Navigation</h3>
+          <div className="quick-actions">
+            <button className="btn quick-btn" onClick={() => onNavigate('contacts')}>
+              <span><Users size={16} /> Browse Synced Contacts</span>
               <ArrowRight size={16} className="muted" />
             </button>
-            <button className="btn" style={{ justifyContent: 'space-between', width: '100%' }} onClick={() => onNavigate('activity')}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Activity size={16} /> View Sync Activity & Queue</span>
+            <button className="btn quick-btn" onClick={() => onNavigate('activity')}>
+              <span><Activity size={16} /> View Sync Activity & Queue</span>
               <ArrowRight size={16} className="muted" />
             </button>
-            <button className="btn" style={{ justifyContent: 'space-between', width: '100%' }} onClick={() => onNavigate('notes')}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FileText size={16} /> Manage Contact Notes</span>
+            <button className="btn quick-btn" onClick={() => onNavigate('notes')}>
+              <span><FileText size={16} /> Manage Contact Notes</span>
               <ArrowRight size={16} className="muted" />
             </button>
           </div>
         </div>
 
-        <div className="card" style={{ padding: '1.5rem' }}>
-          <h3 style={{ marginBottom: '1rem' }}>Portal Information</h3>
-          <dl className="fields" style={{ margin: 0 }}>
-            <div style={{ marginBottom: '0.75rem' }}>
-              <dt style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>HubSpot Portal ID</dt>
-              <dd style={{ fontWeight: 600 }}>{auth?.hubId ?? '—'}</dd>
-            </div>
-            <div style={{ marginBottom: '0.75rem' }}>
-              <dt style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Portal Domain</dt>
-              <dd style={{ fontWeight: 600 }}>{auth?.hubDomain ?? 'Not specified'}</dd>
+        <div className="card dashboard-panel">
+          <h3 className="panel-title">Portal Information</h3>
+          <dl className="fields portal-fields">
+            <div>
+              <dt>HubSpot Portal ID</dt>
+              <dd>{auth?.hubId ?? '—'}</dd>
             </div>
             <div>
-              <dt style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>User Email</dt>
-              <dd style={{ fontWeight: 600 }}>{auth?.userEmail ?? '—'}</dd>
+              <dt>Portal Domain</dt>
+              <dd>{auth?.hubDomain ?? 'Not specified'}</dd>
+            </div>
+            <div>
+              <dt>User Email</dt>
+              <dd>{auth?.userEmail ?? '—'}</dd>
             </div>
           </dl>
         </div>

@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Search, Users } from 'lucide-react';
 import { api } from '../lib/api';
 import { ContactDetailPanel } from './ContactDetail';
-import { Search } from 'lucide-react';
+import { Skeleton } from './Skeleton';
 
 export function NotesView() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -25,11 +26,26 @@ export function NotesView() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        {contactsQuery.isLoading && <p className="muted pad">Loading contacts…</p>}
         {contactsQuery.isError && (
           <div className="banner error inline" role="alert">
             <span>Could not load contacts: {(contactsQuery.error as Error).message}</span>
             <button className="link" type="button" onClick={() => contactsQuery.refetch()}>Retry</button>
+          </div>
+        )}
+        {contactsQuery.isLoading && (
+          <ul className="rows skeleton-list" aria-label="Loading contacts">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <li key={i} className="skeleton-row">
+                <Skeleton className="skeleton-line w60" />
+                <Skeleton className="skeleton-line w40" />
+              </li>
+            ))}
+          </ul>
+        )}
+        {!contactsQuery.isLoading && contactsQuery.data?.data.length === 0 && (
+          <div className="empty-inline">
+            <Users size={24} />
+            <p>{search ? `No contacts match “${search}”.` : 'No contacts yet.'}</p>
           </div>
         )}
         <ul className="rows-container">
@@ -50,7 +66,7 @@ export function NotesView() {
         </ul>
       </div>
 
-      <div className="card" style={{ minHeight: '500px' }}>
+      <div className="notes-detail">
         <ContactDetailPanel contactId={selectedId} />
       </div>
     </div>

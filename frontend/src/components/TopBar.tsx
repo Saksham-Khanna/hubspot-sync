@@ -1,6 +1,6 @@
 import React from 'react';
 import { AuthStatus } from '../lib/api';
-import { LogOut } from 'lucide-react';
+import { LogOut, Menu } from 'lucide-react';
 
 interface TopBarProps {
   title: string;
@@ -9,12 +9,35 @@ interface TopBarProps {
   isAuthError: boolean;
   onDisconnect: () => void;
   isDisconnecting: boolean;
+  navOpen: boolean;
+  onMenuClick: () => void;
 }
 
-export function TopBar({ title, auth, isLoadingAuth, isAuthError, onDisconnect, isDisconnecting }: TopBarProps) {
+export function TopBar({
+  title,
+  auth,
+  isLoadingAuth,
+  isAuthError,
+  onDisconnect,
+  isDisconnecting,
+  navOpen,
+  onMenuClick,
+}: TopBarProps) {
   return (
     <header className="topbar">
-      <h1 className="topbar-title">{title}</h1>
+      <div className="topbar-left">
+        <button
+          className="icon-btn menu-btn"
+          type="button"
+          onClick={onMenuClick}
+          aria-label={navOpen ? 'Close navigation' : 'Open navigation'}
+          aria-controls="app-sidebar"
+          aria-expanded={navOpen}
+        >
+          <Menu size={20} />
+        </button>
+        <h1 className="topbar-title">{title}</h1>
+      </div>
       <div className="topbar-actions">
         {isLoadingAuth && <span className="pill muted">Checking connection…</span>}
         {isAuthError && <span className="pill bad">Server unreachable</span>}

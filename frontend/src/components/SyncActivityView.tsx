@@ -2,6 +2,8 @@ import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Skeleton } from './Skeleton';
+import { useToast } from './Toast';
 
 const ago = (iso: string | null) => {
   if (!iso) return '';
@@ -14,6 +16,7 @@ const ago = (iso: string | null) => {
 
 export function SyncActivityView() {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const status = useQuery({
     queryKey: ['sync-status'],
     queryFn: api.syncStatus,
@@ -22,10 +25,31 @@ export function SyncActivityView() {
 
   const retry = useMutation({
     mutationFn: api.retrySync,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sync-status'] }),
+    onSuccess: (res) => {
+      void qc.invalidateQueries({ queryKey: ['sync-status'] });
+      toast(res.resumed ? 'Sync resumed from its last checkpoint.' : 'A new sync was started.', 'ok');
+    },
+    onError: (err) => toast((err as Error).message, 'error'),
   });
 
-  if (status.isLoading) return <div className="card" style={{ padding: '2rem', textAlign: 'center' }}><span className="muted">Loading sync activity…</span></div>;
+  if (status.isLoading) {
+    return (
+      <div className="activity-skeleton" aria-label="Loading sync activity">
+        <div className="card sync-card">
+          <Skeleton className="skeleton-line w40" />
+          <Skeleton className="skeleton-line w60" />
+        </div>
+        <div className="dashboard-grid">
+          {[0, 1].map((i) => (
+            <div className="card dashboard-panel" key={i}>
+              <Skeleton className="skeleton-line w40" />
+              <Skeleton className="skeleton-value" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
   if (status.isError) {
     return (
       <div className="card" style={{ padding: '2rem' }}>
@@ -68,6 +92,12 @@ export function SyncActivityView() {
             </button>
           )}
         </div>
+
+        {running && (
+          <div className="sync-progress" role="progressbar" aria-label="Sync in progress">
+            <span />
+          </div>
+        )}
 
         {job?.status === 'failed' && job.last_error && (
           <div className="banner error" style={{ margin: '0.5rem 0 0' }}>

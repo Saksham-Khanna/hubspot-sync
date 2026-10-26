@@ -1,6 +1,8 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import { Search, Users } from 'lucide-react';
 import { api, fullName } from '../lib/api';
+import { Skeleton } from './Skeleton';
 
 function useDebounced<T>(value: T, ms: number) {
   const [v, setV] = useState(value);
@@ -32,36 +34,55 @@ export function ContactList({ selectedId, onSelect }: { selectedId: string | nul
     <section className="card list">
       <div className="list-head">
         <h2>Contacts{q.data && <span className="count">{total.toLocaleString()}</span>}</h2>
-        <input
-          type="search"
-          placeholder="Search name, email or company"
-          aria-label="Search contacts"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-        />
+        <div className="search-field">
+          <Search size={15} className="muted" aria-hidden="true" />
+          <input
+            type="search"
+            placeholder="Search name, email or company"
+            aria-label="Search contacts"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+          />
+        </div>
       </div>
 
-      {q.isLoading && <p className="muted pad">Loading contacts…</p>}
       {q.isError && (
         <div className="banner error inline" role="alert">
           <span>Could not load contacts: {(q.error as Error).message}</span>
           <button className="link" onClick={() => q.refetch()}>Retry</button>
         </div>
       )}
-      {q.data && q.data.data.length === 0 && (
-        <p className="muted pad">{search ? `No contacts match “${search}”.` : 'No contacts yet. They appear here as the sync fetches them.'}</p>
+
+      {q.isLoading && (
+        <ul className="rows skeleton-list" aria-label="Loading contacts">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <li key={i} className="skeleton-row">
+              <Skeleton className="skeleton-line w60" />
+              <Skeleton className="skeleton-line w40" />
+            </li>
+          ))}
+        </ul>
       )}
 
-      <ul className={`rows ${q.isPlaceholderData ? 'stale' : ''}`}>
-        {q.data?.data.map((c) => (
-          <li key={c.id}>
-            <button className={`row ${c.id === selectedId ? 'selected' : ''}`} onClick={() => onSelect(c.id)}>
-              <span className="row-name">{fullName(c)}</span>
-              <span className="row-sub">{[c.email, c.company].filter(Boolean).join(' · ') || 'No email or company'}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
+      {!q.isLoading && q.data && q.data.data.length === 0 && (
+        <div className="empty-inline">
+          <Users size={24} />
+          <p>{search ? `No contacts match “${search}”.` : 'No contacts yet. They appear here as the sync fetches them.'}</p>
+        </div>
+      )}
+
+      {!q.isLoading && (
+        <ul className={`rows ${q.isPlaceholderData ? 'stale' : ''}`}>
+          {q.data?.data.map((c) => (
+            <li key={c.id}>
+              <button className={`row ${c.id === selectedId ? 'selected' : ''}`} onClick={() => onSelect(c.id)}>
+                <span className="row-name">{fullName(c)}</span>
+                <span className="row-sub">{[c.email, c.company].filter(Boolean).join(' · ') || 'No email or company'}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {total > PAGE_SIZE && (
         <nav className="pager" aria-label="Pagination">

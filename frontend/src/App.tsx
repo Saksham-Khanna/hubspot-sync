@@ -8,6 +8,7 @@ import { ContactsView } from './components/ContactsView';
 import { SyncActivityView } from './components/SyncActivityView';
 import { NotesView } from './components/NotesView';
 import { SettingsView } from './components/SettingsView';
+import { useToast } from './components/Toast';
 
 const AUTH_ERRORS: Record<string, string> = {
   access_denied: 'You declined access in HubSpot. Connect again when you are ready.',
@@ -29,9 +30,19 @@ function useFlashFromUrl() {
 
 export function App() {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const auth = useQuery({ queryKey: ['auth'], queryFn: api.authStatus });
   const [flash, setFlash] = useFlashFromUrl();
   const [activeTab, setActiveTab] = useState<TabType>('overview');
+  const [navOpen, setNavOpen] = useState(false);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setNavOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   const disconnect = useMutation({
     mutationFn: api.disconnect,
@@ -39,8 +50,15 @@ export function App() {
       qc.clear();
       void qc.invalidateQueries({ queryKey: ['auth'] });
       setActiveTab('overview');
+      toast('HubSpot portal disconnected.', 'ok');
     },
+    onError: (err) => toast((err as Error).message, 'error'),
   });
+
+  const changeTab = (tab: TabType) => {
+    setActiveTab(tab);
+    setNavOpen(false);
+  };
 
   const a = auth.data;
 
@@ -54,7 +72,21 @@ export function App() {
 
   return (
     <div className="app-layout">
-      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} authData={a} />
+      <Sidebar
+        activeTab={activeTab}
+        onTabChange={changeTab}
+        authData={a}
+        open={navOpen}
+        onClose={() => setNavOpen(false)}
+      />
+      {navOpen && (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label="Close navigation"
+          onClick={() => setNavOpen(false)}
+        />
+      )}
 
       <div className="main-content">
         <TopBar
@@ -64,6 +96,8 @@ export function App() {
           isAuthError={auth.isError}
           onDisconnect={() => disconnect.mutate()}
           isDisconnecting={disconnect.isPending}
+          navOpen={navOpen}
+          onMenuClick={() => setNavOpen((open) => !open)}
         />
 
         <main className="content-body">

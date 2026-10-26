@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, Users, Activity, FileText, Settings, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { LayoutDashboard, Users, Activity, FileText, Settings, CheckCircle2, AlertTriangle, X } from 'lucide-react';
 import { AuthStatus } from '../lib/api';
 
 export type TabType = 'overview' | 'contacts' | 'activity' | 'notes' | 'settings';
@@ -8,20 +8,27 @@ interface SidebarProps {
   activeTab: TabType;
   onTabChange: (tab: TabType) => void;
   authData?: AuthStatus;
+  open: boolean;
+  onClose: () => void;
 }
 
-export function Sidebar({ activeTab, onTabChange, authData }: SidebarProps) {
+export function Sidebar({ activeTab, onTabChange, authData, open, onClose }: SidebarProps) {
   const isConnected = authData?.connected;
   const needsReauth = authData?.needsReauth;
 
   return (
-    <aside className="sidebar">
+    <aside id="app-sidebar" className={`sidebar ${open ? 'open' : ''}`}>
       <div className="sidebar-header">
-        <div className="logo-icon">HS</div>
-        <div>
-          <div className="logo-text">HubSpot Sync</div>
-          <div className="small muted">CRM Integration</div>
+        <div className="sidebar-brand">
+          <div className="logo-icon">HS</div>
+          <div>
+            <div className="logo-text">HubSpot Sync</div>
+            <div className="small muted">CRM Integration</div>
+          </div>
         </div>
+        <button className="icon-btn sidebar-close" type="button" onClick={onClose} aria-label="Close navigation">
+          <X size={18} />
+        </button>
       </div>
 
       <nav className="sidebar-nav">
