@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { pool } from '../db';
 import { HttpError } from '../lib/errors';
-import { syncQueue } from '../queues';
+import { syncQueue, withQueueTimeout } from '../queues';
 import { resumeFailedSync, startSync } from '../services/sync';
 import { requireAccount } from './session';
 
@@ -16,7 +16,7 @@ export async function syncRoutes(app: FastifyInstance) {
       pool.query(`SELECT ${JOB_COLS} FROM sync_jobs WHERE account_id=$1 ORDER BY created_at DESC LIMIT 1`, [id]),
       pool.query('SELECT count(*)::int AS n FROM contacts WHERE account_id=$1 AND deleted_at IS NULL', [id]),
       pool.query('SELECT status, count(*)::int AS n FROM notes WHERE account_id=$1 GROUP BY status', [id]),
-      syncQueue.getJobCounts('waiting', 'active', 'delayed', 'failed'),
+      withQueueTimeout(syncQueue.getJobCounts('waiting', 'active', 'delayed', 'failed'), 'queue.getJobCounts'),
     ]);
     const noteCounts: Record<string, number> = { pending: 0, syncing: 0, synced: 0, failed: 0 };
     for (const r of notes.rows) noteCounts[r.status] = r.n;

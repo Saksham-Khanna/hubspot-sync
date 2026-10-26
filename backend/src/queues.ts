@@ -1,4 +1,4 @@
-import { Queue } from 'bullmq';
+import { Job, JobsOptions, Queue } from 'bullmq';
 import { redis } from './redis';
 
 export interface SyncPageData {
@@ -31,6 +31,23 @@ export const maintenanceQueue = new Queue(MAINTENANCE_QUEUE, {
   connection: redis,
   defaultJobOptions: { removeOnComplete: 10, removeOnFail: 50, attempts: 1 },
 });
+
+/** Guards request-path queue calls: BullMQ waits for a connection indefinitely when Redis is down. */
+export const QUEUE_OP_TIMEOUT_MS = 5_000;
+
+export function withQueueTimeout<T>(p: Promise<T>, label: string, ms = QUEUE_OP_TIMEOUT_MS): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms (Redis unavailable?)`)), ms);
+    p.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
+export function addJob(queue: Queue, name: string, data: unknown, opts?: JobsOptions): Promise<Job> {
+  return withQueueTimeout(queue.add(name, data, opts), `queue.add(${name})`);
+}
 
 export async function closeQueues() {
   await Promise.all([syncQueue.close(), notesQueue.close(), maintenanceQueue.close()]);

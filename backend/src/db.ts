@@ -8,6 +8,9 @@ export const pool = new pg.Pool({
   connectionString: config.DATABASE_URL,
   max: config.DB_POOL_MAX,
   ssl: config.DATABASE_SSL ? { rejectUnauthorized: false } : undefined,
+  // Fail in seconds with an actionable error instead of leaving boot/readiness stuck when the
+  // database host is unreachable (default is to wait forever).
+  connectionTimeoutMillis: 5_000,
 });
 
 export type Queryable = Pick<pg.Pool | pg.PoolClient, 'query'>;

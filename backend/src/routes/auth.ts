@@ -6,6 +6,7 @@ import { pool } from '../db';
 import { hubspot } from '../hubspot/client';
 import { encrypt } from '../lib/crypto';
 import { logger } from '../lib/logger';
+import { diagnoseOAuthState } from '../lib/oauthState';
 import { startSync } from '../services/sync';
 import { SESSION_COOKIE, readSession, setSession } from './session';
 
@@ -18,11 +19,19 @@ const callbackQuery = z.object({
   error: z.string().optional(),
 });
 
+// Safe diagnostics: origins are public, but the state value, code, cookies and tokens never are.
+const requestOrigin = (req: { protocol: string; hostname: string }) => `${req.protocol}://${req.hostname}`;
+const redirectOrigin = new URL(config.HUBSPOT_REDIRECT_URI).origin;
+
 export async function authRoutes(app: FastifyInstance) {
   // Step 1: the "Connect HubSpot" button navigates here. We mint a random `state`, remember it in a
   // signed httpOnly cookie and send the browser to HubSpot's consent screen.
-  app.get('/auth/hubspot/start', async (_req, reply) => {
+  app.get('/auth/hubspot/start', async (req, reply) => {
     const state = randomBytes(24).toString('base64url');
+    req.log.info(
+      { requestOrigin: requestOrigin(req), redirectOrigin, secureCookie: config.NODE_ENV === 'production', cookiePath: STATE_PATH },
+      'oauth start issued',
+    );
     reply.setCookie(STATE_COOKIE, state, {
       signed: true,
       httpOnly: true,
@@ -40,14 +49,43 @@ export async function authRoutes(app: FastifyInstance) {
     const q = callbackQuery.parse(req.query);
 
     const cookie = req.cookies[STATE_COOKIE];
-    const expected = cookie ? req.unsignCookie(cookie) : null;
+    const unsigned = cookie ? req.unsignCookie(cookie) : null;
+    const signatureValid = unsigned?.valid === true;
+    const stateMatches = Boolean(q.state) && signatureValid && unsigned?.value === q.state;
+    const failure = diagnoseOAuthState({
+      providerError: q.error,
+      hasCode: Boolean(q.code),
+      hasStateParam: Boolean(q.state),
+      hasCookie: Boolean(cookie),
+      cookieSignatureValid: signatureValid,
+      stateMatches,
+    });
+
     reply.clearCookie(STATE_COOKIE, { path: STATE_PATH });
 
-    if (q.error) return back(`auth_error=${encodeURIComponent(q.error)}`);
-    if (!q.code || !q.state || !expected?.valid || expected.value !== q.state) return back('auth_error=invalid_state');
+    if (failure !== 'ok') {
+      // `missing_state_cookie` here usually means the callback host differs from the host that
+      // served /auth/hubspot/start: the cookie is host-only, so a cross-host redirect loses it.
+      req.log.warn(
+        {
+          reason: failure,
+          requestOrigin: requestOrigin(req),
+          redirectOrigin,
+          hasStateParam: Boolean(q.state),
+          hasCookie: Boolean(cookie),
+          cookieSignatureValid: signatureValid,
+          stateMatches,
+        },
+        'oauth callback rejected',
+      );
+      if (failure === 'provider_error') return back(`auth_error=${encodeURIComponent(q.error!)}`);
+      return back('auth_error=invalid_state');
+    }
+
+    req.log.info({ requestOrigin: requestOrigin(req), redirectOrigin }, 'oauth callback state validated');
 
     try {
-      const tokens = await hubspot.exchangeCode(q.code);
+      const tokens = await hubspot.exchangeCode(q.code!);
       const info = await hubspot.getTokenInfo(tokens.access_token);
       const { rows } = await pool.query<{ id: string }>(
         `INSERT INTO accounts (hub_id, hub_domain, user_email, status, access_token_enc, refresh_token_enc, token_expires_at, scopes)

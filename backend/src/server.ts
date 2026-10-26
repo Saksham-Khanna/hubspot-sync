@@ -8,7 +8,14 @@ import { httpRedis, redis } from './redis';
 import { startWorkers } from './workers';
 
 async function main() {
-  if (config.AUTO_MIGRATE) await migrate();
+  if (config.AUTO_MIGRATE) {
+    try {
+      await migrate();
+    } catch (err) {
+      logger.error({ err }, 'startup failed: could not reach Postgres or apply migrations (check DATABASE_URL)');
+      throw err;
+    }
+  }
   const app = await buildApp();
   // Single-process mode (cheap hosting). In production run `worker.ts` as a separate, scalable service.
   const workers = config.RUN_WORKERS_IN_API ? startWorkers() : null;

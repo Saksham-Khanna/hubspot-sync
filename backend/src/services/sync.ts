@@ -6,7 +6,7 @@ import { HubSpotError } from '../lib/errors';
 import { classify } from '../lib/errors';
 import { logger } from '../lib/logger';
 import { acquireHubSpotSlot, delayJob } from '../lib/rateLimiter';
-import { RefreshContactsData, SyncPageData, syncQueue } from '../queues';
+import { RefreshContactsData, SyncPageData, addJob, syncQueue } from '../queues';
 import { upsertContacts } from './contacts';
 import { withToken } from './tokens';
 
@@ -31,7 +31,7 @@ export interface SyncJobRow {
 export const pageJobId = (syncJobId: string, run: number, page: number) => `sync-${syncJobId}-r${run}-p${page}`;
 
 export function enqueuePage(syncJobId: string, run: number, page: number, delayMs = 0) {
-  return syncQueue.add('sync-page', { syncJobId } satisfies SyncPageData, {
+  return addJob(syncQueue, 'sync-page', { syncJobId } satisfies SyncPageData, {
     jobId: pageJobId(syncJobId, run, page),
     delay: delayMs || undefined,
   });

@@ -7,7 +7,14 @@ import { redis } from './redis';
 import { startWorkers } from './workers';
 
 async function main() {
-  if (config.AUTO_MIGRATE) await migrate();
+  if (config.AUTO_MIGRATE) {
+    try {
+      await migrate();
+    } catch (err) {
+      logger.error({ err }, 'startup failed: could not reach Postgres or apply migrations (check DATABASE_URL)');
+      throw err;
+    }
+  }
   const workers = startWorkers();
   logger.info({ sync: config.SYNC_CONCURRENCY, notes: config.NOTES_CONCURRENCY }, 'worker started');
 

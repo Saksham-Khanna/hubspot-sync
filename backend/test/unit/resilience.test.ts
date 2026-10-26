@@ -36,19 +36,37 @@ describe('unreachable Postgres/Redis', () => {
     expect(Date.now() - t0).toBeLessThan(2_000);
   });
 
-  it('answers /api/auth/status as disconnected without waiting for Redis', async () => {
+  it('fails closed on normal routes instead of hanging', async () => {
     const t0 = Date.now();
     const res = await app.inject({ method: 'GET', url: '/api/auth/status' });
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ connected: false });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ error: 'rate_limiter_unavailable' });
+    expect(res.headers['retry-after']).toBe('5');
     expect(Date.now() - t0).toBeLessThan(2_000);
   });
 
-  it('reports /api/ready as 503 quickly instead of hanging', async () => {
+  it('reports /api/ready as 503 with per-dependency detail instead of hanging', async () => {
     const t0 = Date.now();
     const res = await app.inject({ method: 'GET', url: '/api/ready' });
     expect(res.statusCode).toBe(503);
-    expect(res.json()).toMatchObject({ ok: false });
+    expect(res.json()).toMatchObject({
+      ok: false,
+      dependencies: {
+        database: { ok: false },
+        redis: { ok: false },
+      },
+    });
     expect(Date.now() - t0).toBeLessThan(4_000);
+  });
+
+  it('keeps every request bounded (no hang on repeated probes)', async () => {
+    const t0 = Date.now();
+    await Promise.all([
+      app.inject({ method: 'GET', url: '/api/health' }),
+      app.inject({ method: 'GET', url: '/api/ready' }),
+      app.inject({ method: 'GET', url: '/api/auth/status' }),
+      app.inject({ method: 'GET', url: '/api/contacts' }),
+    ]);
+    expect(Date.now() - t0).toBeLessThan(5_000);
   });
 });

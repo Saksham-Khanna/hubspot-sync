@@ -19,7 +19,8 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1),
   DATABASE_SSL: bool.default('false'),
   DB_POOL_MAX: z.coerce.number().int().default(20),
-  REDIS_URL: z.string().default('redis://localhost:6379'),
+  // Required: a silent localhost fallback made production hang on an unreachable Redis.
+  REDIS_URL: z.string().min(1),
 
   HUBSPOT_CLIENT_ID: z.string().min(1),
   HUBSPOT_CLIENT_SECRET: z.string().min(1),
@@ -46,17 +47,9 @@ const schema = z.object({
 
   RUN_WORKERS_IN_API: bool.default('false'),
   AUTO_MIGRATE: bool.default('true'),
-}).superRefine((cfg, ctx) => {
-  // The localhost default is for tests/local dev only. In production a missing REDIS_URL used to
-  // silently point at a non-existent local Redis, which hung every HTTP request behind the rate
-  // limiter. Fail fast at boot with an actionable message instead.
-  if (cfg.NODE_ENV === 'production' && !process.env.REDIS_URL) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['REDIS_URL'],
-      message: 'required in production (copy the Internal connection string of the Render Key Value instance)',
-    });
-  }
+
+  // Global HTTP rate limit per client IP (existing default: 600 requests/minute).
+  HTTP_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(600),
 });
 
 const parsed = schema.safeParse(process.env);

@@ -7,15 +7,17 @@ import { logger } from './lib/logger';
 // must never be used on the HTTP request path - see `httpRedis` below.
 export const redis = new IORedis(config.REDIS_URL, {
   maxRetriesPerRequest: null,
+  connectTimeout: 5_000,
   retryStrategy: (times) => Math.min(times * 500, 5_000),
 });
 // Without a listener ioredis turns connection failures into uncaught exceptions.
 redis.on('error', (err) => logger.error({ err }, 'redis connection error'));
 
 /**
- * Request-path client, used by the HTTP rate limiter. It must fail fast instead of queueing
- * commands: if Redis is unreachable the limiter's `skipOnError` lets the request through, whereas a
- * queued command (maxRetriesPerRequest=null) would leave the HTTP request hanging until timeout.
+ * Request-path client, used by the HTTP rate limiter (and the readiness probe). It must fail fast
+ * instead of queueing commands: a queued command (maxRetriesPerRequest=null) would leave every HTTP
+ * request hanging until the client timeout. `enableOfflineQueue: false` makes commands reject
+ * immediately while disconnected; `app.ts` turns that state into a fast 503 for non-liveness routes.
  */
 export const httpRedis = new IORedis(config.REDIS_URL, {
   maxRetriesPerRequest: 1,

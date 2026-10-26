@@ -77,9 +77,9 @@ docker compose up --build     # postgres, redis, api, worker  (scale: --scale wo
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DATABASE_URL` | – | Postgres connection string |
+| `DATABASE_URL` | – | Postgres connection string (5s connect timeout) |
 | `DATABASE_SSL` | `false` | `true` for managed DBs that require TLS |
-| `REDIS_URL` | `redis://localhost:6379` | BullMQ + rate limiter. **Must use `maxmemory-policy noeviction`** |
+| `REDIS_URL` | – (**required**) | BullMQ + rate limiter. **Must use `maxmemory-policy noeviction`**. All environments must set it; the API fails closed (see health contract below) while it is unreachable |
 | `HUBSPOT_CLIENT_ID` / `HUBSPOT_CLIENT_SECRET` | – | From your HubSpot app |
 | `HUBSPOT_REDIRECT_URI` | – | Exact redirect URL registered on the app; points at the **frontend origin** |
 | `HUBSPOT_SCOPES` | `oauth crm.objects.contacts.read crm.objects.contacts.write` | Must match the app's configured scopes |
@@ -93,6 +93,7 @@ docker compose up --build     # postgres, redis, api, worker  (scale: --scale wo
 | `INCREMENTAL_INTERVAL_MIN` | `15` | Safety-net incremental sync cadence |
 | `RUN_WORKERS_IN_API` | `false` | `true` = single process; `false` = run `npm run start:worker` separately |
 | `AUTO_MIGRATE` | `true` | Apply SQL migrations on boot (advisory-locked) |
+| `HTTP_RATE_LIMIT_MAX` | `600` | Global HTTP requests/minute per client IP (Redis-backed) |
 | `DB_POOL_MAX`, `PORT`, `LOG_LEVEL` | `20`, `3000`, `info` | Ops knobs |
 
 The frontend needs **no** env vars: it always calls relative `/api/...` (Vite proxy locally, Vercel rewrite in production), which keeps the session cookie first-party.
@@ -111,7 +112,7 @@ npm test
 
 **Frontend → Vercel**
 1. Import the repo, set **Root Directory = `frontend`** (framework auto-detects Vite).
-2. Edit `frontend/vercel.json`: replace `YOUR-BACKEND-HOST.example.com` with your API host. This rewrite is what makes `/api/*` same-origin.
+2. Edit `frontend/vercel.json` if your API host differs from `hubspot-sync-api.onrender.com`. This rewrite is what makes `/api/*` same-origin.
 3. Register `https://<your-app>.vercel.app/api/auth/hubspot/callback` as a redirect URL in HubSpot.
 
 **Backend → any container host** (Render blueprint in `render.yaml`; Railway/Fly/ECS work the same):
@@ -119,6 +120,18 @@ npm test
 - Set the env vars above (`HUBSPOT_REDIRECT_URI` and `FRONTEND_URL` use the Vercel URL; `WEBHOOK_PUBLIC_URL` uses the API's public URL).
 - Health: `GET /api/health` (liveness), `GET /api/ready` (DB + Redis), `GET /metrics` (Prometheus; restrict at the proxy in production).
 - For a minimal single-service deploy set `RUN_WORKERS_IN_API=true` and skip the worker service.
+
+### Health and rate-limit behaviour
+- `GET /api/health` is **liveness only**: it never touches Postgres, Redis, HubSpot or workers, so it answers immediately during a dependency outage.
+- `GET /api/ready` is **readiness**: it probes Postgres (`SELECT 1`) and Redis (`PING`) with a 3s bound each and returns `503 { ok: false, dependencies: { database, redis } }` when either is unavailable.
+- `REDIS_URL` is required (no localhost default). While the rate limiter's Redis connection is not ready, non-liveness routes fail fast with `503 { error: "rate_limiter_unavailable" }`; health/ready stay reachable. There is deliberately no in-memory production fallback, because a per-process limit is not shared across instances.
+- `RUN_WORKERS_IN_API=false` (the default) requires a separate worker service running `node dist/worker.js`. If you deploy only one service, set it to `true` or jobs will stay queued forever.
+
+### HubSpot app configuration
+- **Scopes** must match `HUBSPOT_SCOPES` exactly. The default is `oauth crm.objects.contacts.read crm.objects.contacts.write`.
+- **Redirect URL** must match `HUBSPOT_REDIRECT_URI` exactly; it points at the frontend origin (e.g. `https://<vercel-app>/api/auth/hubspot/callback`).
+- **Webhooks**: subscribe to `contact.creation`, `contact.propertyChange` and `contact.deletion`, and register the target as either `https://<api-host>/api/webhooks/hubspot` or `https://<vercel-app>/api/webhooks/hubspot` (Vercel rewrite). Signature v3 verification signs the exact URL HubSpot calls: set `WEBHOOK_PUBLIC_URL` to that URL. If unset, it is derived as `<origin of HUBSPOT_REDIRECT_URI>/api/webhooks/hubspot`. If the derived URL differs from the registered target, every delivery gets `401 invalid_signature`.
+- **`auth_error=invalid_state`**: check the API log line `oauth callback rejected`. `reason=missing_state_cookie` means the callback host (`HUBSPOT_REDIRECT_URI`) differs from the host that served `/api/auth/hubspot/start`; the `oauth_state` cookie is host-only, `Path=/api/auth`, 10-minute lifetime. `state_mismatch` usually means a stale tab or a second "Connect" attempt overwrote the cookie. The API also logs a startup warning when the `HUBSPOT_REDIRECT_URI` origin differs from `FRONTEND_URL`.
 
 ## Assumptions
 - A browser session = one HubSpot portal (tenant). Whoever completes OAuth for a portal gets access to that portal's synced data. There are no per-user roles inside a portal.

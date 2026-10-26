@@ -38,7 +38,7 @@ beforeAll(async () => {
   hs.seed(250);
   await hs.start();
   process.env.HUBSPOT_API_BASE = hs.url;
-  const [{ buildApp }, db, { redis }, { startWorkers }, { migrate }, { sweep }, tokens, sync, queues] = await Promise.all([
+  const [{ buildApp }, db, { redis, httpRedis }, { startWorkers }, { migrate }, { sweep }, tokens, sync, queues] = await Promise.all([
     import('../../src/app'),
     import('../../src/db'),
     import('../../src/redis'),
@@ -52,6 +52,8 @@ beforeAll(async () => {
   await migrate();
   await db.pool.query('TRUNCATE accounts CASCADE');
   await redis.flushdb();
+  // The rate limiter uses its own fail-fast connection; wait until it is ready so tests do not race boot.
+  await httpRedis.ping();
   const app = await buildApp();
   await app.ready();
   m = {
@@ -76,7 +78,13 @@ describe('OAuth', () => {
     const loc = new URL(res.headers.location as string);
     expect(loc.searchParams.get('client_id')).toBe('test-client-id');
     expect(loc.searchParams.get('scope')).toContain('crm.objects.contacts.read');
+    expect(loc.searchParams.get('redirect_uri')).toBe(process.env.HUBSPOT_REDIRECT_URI);
     expect(res.cookies.find((c) => c.name === 'oauth_state')).toBeTruthy();
+  });
+
+  it('rejects a callback that arrives without the state cookie (cross-host callback)', async () => {
+    const res = await m.app.inject({ method: 'GET', url: '/api/auth/hubspot/callback?code=good-code&state=whatever' });
+    expect(res.headers.location).toContain('auth_error=invalid_state');
   });
 
   it('rejects a callback whose state does not match (CSRF)', async () => {

@@ -5,11 +5,11 @@ import { HttpError, HubSpotError, classify } from '../lib/errors';
 import { logger } from '../lib/logger';
 import { notesPushed } from '../lib/metrics';
 import { acquireHubSpotSlot, delayJob } from '../lib/rateLimiter';
-import { PushNoteData, notesQueue } from '../queues';
+import { PushNoteData, addJob, notesQueue } from '../queues';
 import { withToken } from './tokens';
 
 export function enqueueNotePush(noteId: string) {
-  return notesQueue.add('push-note', { noteId } satisfies PushNoteData);
+  return addJob(notesQueue, 'push-note', { noteId } satisfies PushNoteData);
 }
 
 /**

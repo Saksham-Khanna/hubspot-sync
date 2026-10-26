@@ -4,7 +4,7 @@ import { config } from '../config';
 import { pool } from '../db';
 import { verifyHubSpotV3Signature } from '../lib/crypto';
 import { logger } from '../lib/logger';
-import { syncQueue } from '../queues';
+import { addJob, syncQueue } from '../queues';
 import { softDeleteContacts } from '../services/contacts';
 
 const events = z.array(
@@ -70,7 +70,7 @@ export async function webhookRoutes(app: FastifyInstance) {
     for (const [accountId, set] of toRefresh) {
       const ids = [...set];
       for (let i = 0; i < ids.length; i += 100) {
-        await syncQueue.add('refresh-contacts', { accountId, hubspotIds: ids.slice(i, i + 100) });
+        await addJob(syncQueue, 'refresh-contacts', { accountId, hubspotIds: ids.slice(i, i + 100) });
         queued++;
       }
     }
