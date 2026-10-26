@@ -4,7 +4,7 @@ import { pool } from './db';
 import { logger } from './lib/logger';
 import { migrate } from './migrate';
 import { closeQueues } from './queues';
-import { redis } from './redis';
+import { httpRedis, redis } from './redis';
 import { startWorkers } from './workers';
 
 async function main() {
@@ -25,6 +25,7 @@ async function main() {
     await closeQueues();
     await pool.end();
     redis.disconnect();
+    httpRedis.disconnect();
     process.exit(0);
   };
   process.on('SIGTERM', () => void stop('SIGTERM'));
