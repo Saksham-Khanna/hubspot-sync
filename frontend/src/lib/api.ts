@@ -5,16 +5,28 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(`/api${path}`, {
-    credentials: 'include',
-    ...init,
-    headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
-    throw new ApiError(body.message ?? `Request failed (${res.status})`, res.status, body.error);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout for cold starts / network delays
+  try {
+    const res = await fetch(`/api${path}`, {
+      credentials: 'include',
+      signal: controller.signal,
+      ...init,
+      headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
+    });
+    clearTimeout(timeoutId);
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
+      throw new ApiError(body.message ?? `Request failed (${res.status})`, res.status, body.error);
+    }
+    return res.json() as Promise<T>;
+  } catch (err: unknown) {
+    clearTimeout(timeoutId);
+    if ((err as Error).name === 'AbortError') {
+      throw new ApiError('Request timed out. The server may be waking up from inactivity.', 504, 'timeout');
+    }
+    throw err;
   }
-  return res.json() as Promise<T>;
 }
 
 export interface AuthStatus {
